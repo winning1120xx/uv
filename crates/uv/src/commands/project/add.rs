@@ -575,6 +575,13 @@ pub(crate) async fn add(
         return Ok(ExitStatus::Success);
     }
 
+    {
+        eprintln!("clear");
+        let mut locked = uv_workspace::WORKSPACE_DISCOVERY_CACHE.lock().unwrap();
+        locked.clear();
+        eprintln!("clear done");
+    }
+
     // If we're modifying a script, and lockfile doesn't exist, don't create it.
     if let AddTarget::Script(ref script, _) = target {
         if !LockTarget::from(script).lock_path().is_file() {
@@ -804,6 +811,13 @@ async fn lock_and_sync(
             .await?
             .into_lock();
         }
+    }
+
+    {
+        eprintln!("clear");
+        let mut locked = uv_workspace::WORKSPACE_DISCOVERY_CACHE.lock().unwrap();
+        locked.clear();
+        eprintln!("clear done");
     }
 
     let AddTarget::Project(project, environment) = target else {
