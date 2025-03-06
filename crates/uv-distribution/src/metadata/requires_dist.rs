@@ -475,7 +475,7 @@ mod test {
     use uv_normalize::PackageName;
     use uv_pep508::Requirement;
     use uv_workspace::pyproject::PyProjectToml;
-    use uv_workspace::{DiscoveryOptions, ProjectWorkspace};
+    use uv_workspace::{DiscoveryOptions, ProjectWorkspace, WorkspaceCache};
 
     use crate::metadata::requires_dist::FlatRequiresDist;
     use crate::RequiresDist;
@@ -494,6 +494,7 @@ mod test {
                 stop_discovery_at: Some(path),
                 ..DiscoveryOptions::default()
             },
+            &WorkspaceCache::default(),
         )
         .await?;
         let requires_dist = uv_pypi_types::RequiresDist::parse_pyproject_toml(contents)?;

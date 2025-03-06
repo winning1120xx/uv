@@ -3,10 +3,10 @@
 use glob::{glob, GlobError, PatternError};
 use rustc_hash::{FxHashMap, FxHashSet};
 
+use serde::Deserialize;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
-
 use tracing::{debug, trace, warn};
 use uv_distribution_types::Index;
 use uv_fs::{Simplified, CWD};
@@ -24,9 +24,10 @@ use crate::pyproject::{
     Project, PyProjectToml, PyprojectTomlError, Sources, ToolUvSources, ToolUvWorkspace,
 };
 
-pub static WORKSPACE_DISCOVERY_CACHE: LazyLock<
-    Arc<Mutex<FxHashMap<PathBuf, Arc<BTreeMap<PackageName, WorkspaceMember>>>>>,
-> = LazyLock::new(Arc::default);
+type WorkspaceMembers = BTreeMap<PackageName, WorkspaceMember>;
+
+#[derive(Debug, Default, Clone)]
+pub struct WorkspaceCache(Arc<Mutex<FxHashMap<PathBuf, Arc<WorkspaceMembers>>>>);
 
 #[derive(thiserror::Error, Debug)]
 pub enum WorkspaceError {
@@ -666,12 +667,11 @@ impl Workspace {
         workspace_pyproject_toml: PyProjectToml,
         current_project: Option<WorkspaceMember>,
         options: &DiscoveryOptions<'_>,
+        cache: &WorkspaceCache,
     ) -> Result<Workspace, WorkspaceError> {
         // TODO(konsti): Cache workspace discovery in any case where the options match.
         let mut workspace_members = {
-            let mut cache = (*WORKSPACE_DISCOVERY_CACHE)
-                .lock()
-                .expect("there was a panic in another thread");
+            let mut cache = cache.0.lock().expect("there was a panic in another thread");
             if options == &DiscoveryOptions::default() {
                 if let Some(workspace_members) = cache.get(&workspace_root) {
                     trace!(
@@ -1137,6 +1137,7 @@ impl ProjectWorkspace {
         project: &Project,
         project_pyproject_toml: &PyProjectToml,
         options: &DiscoveryOptions<'_>,
+        cache: &WorkspaceCache,
     ) -> Result<Self, WorkspaceError> {
         let project_path = std::path::absolute(install_path)
             .map_err(WorkspaceError::Normalize)?
@@ -1214,6 +1215,7 @@ impl ProjectWorkspace {
             workspace_pyproject_toml,
             Some(current_project),
             options,
+            cache,
         )
         .await?;
 
