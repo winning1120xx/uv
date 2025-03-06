@@ -1,10 +1,12 @@
 //! Resolve the current [`ProjectWorkspace`] or [`Workspace`].
 
+use glob::{glob, GlobError, PatternError};
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
 
-use glob::{glob, GlobError, PatternError};
-use rustc_hash::FxHashSet;
 use tracing::{debug, trace, warn};
 use uv_distribution_types::Index;
 use uv_fs::{Simplified, CWD};
@@ -21,6 +23,9 @@ use crate::dependency_groups::{DependencyGroupError, FlatDependencyGroups};
 use crate::pyproject::{
     Project, PyProjectToml, PyprojectTomlError, Sources, ToolUvSources, ToolUvWorkspace,
 };
+
+static WORKSPACE_DISCOVERY_CACHE: LazyLock<Arc<Mutex<FxHashMap<PathBuf, Arc<Workspace>>>>> =
+    LazyLock::new(Arc::default);
 
 #[derive(thiserror::Error, Debug)]
 pub enum WorkspaceError {
@@ -58,7 +63,7 @@ pub enum WorkspaceError {
     Normalize(#[source] std::io::Error),
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub enum MemberDiscovery<'a> {
     /// Discover all workspace members.
     #[default]
@@ -69,7 +74,7 @@ pub enum MemberDiscovery<'a> {
     Ignore(FxHashSet<&'a Path>),
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct DiscoveryOptions<'a> {
     /// The path to stop discovery at.
     pub stop_discovery_at: Option<&'a Path>,
@@ -667,6 +672,40 @@ impl Workspace {
 
     /// Collect the workspace member projects from the `members` and `excludes` entries.
     async fn collect_members(
+        workspace_root: PathBuf,
+        workspace_definition: ToolUvWorkspace,
+        workspace_pyproject_toml: PyProjectToml,
+        options: &DiscoveryOptions<'_>,
+    ) -> Result<Workspace, WorkspaceError> {
+        // TODO(konsti): Cache workspace discovery in any case where the options match.
+        if options == &DiscoveryOptions::default() {
+            if let Some(workspace) = (*WORKSPACE_DISCOVERY_CACHE)
+                .lock()
+                .expect("there was a panic in another thread")
+                .get(&workspace_root)
+            {
+                return Ok((**workspace).clone());
+            }
+        }
+
+        let workspace = Self::collect_members_impl(
+            workspace_root.clone(),
+            workspace_definition,
+            workspace_pyproject_toml,
+            options,
+        )
+        .await?;
+
+        (*WORKSPACE_DISCOVERY_CACHE)
+            .lock()
+            .expect("there was a panic in another thread")
+            .insert(workspace_root, Arc::new(workspace.clone()));
+
+        Ok(workspace)
+    }
+
+    /// Collect the workspace member projects from the `members` and `excludes` entries.
+    async fn collect_members_impl(
         workspace_root: PathBuf,
         workspace_definition: ToolUvWorkspace,
         workspace_pyproject_toml: PyProjectToml,
